@@ -2,7 +2,7 @@ defmodule IEC104.APDUTest do
   use ExUnit.Case
 
   alias IEC104.APDU
-  alias IEC104.APDU.{ControlFunction, SupervisoryFunction}
+  alias IEC104.APDU.{ControlFunction, InformationTransfer, SupervisoryFunction}
 
   describe "unnumbered control functions (U-format)" do
     test "startdt act" do
@@ -39,6 +39,22 @@ defmodule IEC104.APDUTest do
       decoded = %APDU{
         apci: %SupervisoryFunction{
           received_sequence_number: 14986
+        }
+      }
+
+      assert {:ok, decoded, <<>>} == IEC104.APDU.decode(encoded)
+      assert {:ok, encoded} == IEC104.APDU.encode(decoded)
+    end
+  end
+
+  describe "information transfer (I-format)" do
+    test "apci sequence numbers" do
+      encoded = <<0x68, 0x04, 0x06, 0x75, 0xB8, 0x57>>
+
+      decoded = %APDU{
+        apci: %InformationTransfer{
+          sent_sequence_number: 14979,
+          received_sequence_number: 11228
         }
       }
 

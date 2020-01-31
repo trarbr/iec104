@@ -1,16 +1,15 @@
 defmodule IEC104.APDU.SupervisoryFunction do
+  alias IEC104.APDU.SequenceNumber
+
   defstruct [:received_sequence_number]
 
   def encode(%{received_sequence_number: number}) do
-    <<msb::8, lsb::7>> = <<number::15>>
-    <<0::6, 0::1, 1::1, 0::8, lsb::7, 0::1, msb::8>>
+    <<0::6, 0::1, 1::1, 0::8, SequenceNumber.encode(number)::bytes-size(2)>>
   end
 
-  def decode(<<_::7, 1::1, _::8, lsb::7, 0::1, msb::8>>) do
-    <<number::15>> = <<msb::8, lsb::7>>
-
+  def decode(<<_::7, 1::1, _::8, number::bytes-size(2)>>) do
     %__MODULE__{
-      received_sequence_number: number
+      received_sequence_number: SequenceNumber.decode(number)
     }
   end
 end
