@@ -1,5 +1,5 @@
-defmodule IEC104.APDU.SupervisoryFunction do
-  alias IEC104.APDU.SequenceNumber
+defmodule IEC104.Frame.SupervisoryFunction do
+  alias IEC104.Frame.SequenceNumber
 
   defstruct [:received_sequence_number]
 

@@ -1,5 +1,5 @@
-defmodule IEC104.APDU.InformationTransfer do
-  alias IEC104.APDU.SequenceNumber
+defmodule IEC104.Frame.InformationTransfer do
+  alias IEC104.Frame.SequenceNumber
 
   defstruct [:sent_sequence_number, :received_sequence_number]
 

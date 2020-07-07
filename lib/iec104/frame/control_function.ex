@@ -1,7 +1,16 @@
-defmodule IEC104.APDU.ControlFunction do
+defmodule IEC104.Frame.ControlFunction do
   defstruct [:function]
 
   def encode(%{function: function}) do
+    # TODO:
+    # Test Frame Activation
+    # Test Frame Confirmation
+    # Stop Data Transfer Activation
+    # Stop Data Transfer Confirmation
+    # Start Data Transfer Activation DONE
+    # Start Data Transfer Confirmation DONE
+    # Check if test frames are ever used?
+    # 104apci.type == 3 and 104apci.utype == 0x11 in wireshark
     control_flag_1 =
       case function do
         :start_data_transfer_activation -> <<0b00000111>>
