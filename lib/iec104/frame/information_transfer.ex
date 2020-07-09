@@ -1,6 +1,10 @@
 defmodule IEC104.Frame.InformationTransfer do
   alias IEC104.Frame.SequenceNumber
 
+  @type t() :: %__MODULE__{
+          sent_sequence_number: integer(),
+          received_sequence_number: integer()
+        }
   defstruct [:sent_sequence_number, :received_sequence_number]
 
   def encode(%{sent_sequence_number: sent, received_sequence_number: received}) do

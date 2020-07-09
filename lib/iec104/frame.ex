@@ -2,6 +2,11 @@ defmodule IEC104.Frame do
   alias IEC104.Frame.{ControlFunction, InformationTransfer, SupervisoryFunction}
   alias IEC104.Telegram
 
+  @type t() :: %__MODULE__{
+          apci: ControlFunction.t() | InformationTransfer.t() | SupervisoryFunction.t(),
+          telegram: nil | Telegram.t()
+        }
+
   defstruct [:apci, :telegram]
 
   @start_byte 0x68
@@ -28,6 +33,7 @@ defmodule IEC104.Frame do
     {:ok, <<@start_byte, length, apci::bytes, telegram::bytes>>}
   end
 
+  @spec decode(bitstring()) :: {:ok, IEC104.Frame.t(), bitstring}
   def decode(<<@start_byte, length, control_flags::bytes-size(4), rest::bitstring>>)
       when byte_size(rest) >= length - 4 do
     apci = decode_apci(control_flags)

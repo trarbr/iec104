@@ -1,6 +1,10 @@
 defmodule IEC104.Frame.SupervisoryFunction do
   alias IEC104.Frame.SequenceNumber
 
+  @type t() :: %__MODULE__{
+          received_sequence_number: integer()
+        }
+
   defstruct [:received_sequence_number]
 
   def encode(%{received_sequence_number: number}) do

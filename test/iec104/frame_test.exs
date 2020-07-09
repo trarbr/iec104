@@ -1,5 +1,5 @@
 defmodule IEC104.FrameTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   alias IEC104.Frame
   alias IEC104.Frame.{ControlFunction, InformationTransfer, SupervisoryFunction}
