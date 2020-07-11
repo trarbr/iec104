@@ -5,6 +5,14 @@ defmodule IEC104.InformationElement.QDS do
 
   alias IEC104.Helpers
 
+  @type t() :: %__MODULE__{
+          invalid?: boolean(),
+          topical?: boolean(),
+          substituted?: boolean(),
+          blocked?: boolean(),
+          topical?: boolean()
+        }
+
   defstruct [
     :invalid?,
     :topical?,
