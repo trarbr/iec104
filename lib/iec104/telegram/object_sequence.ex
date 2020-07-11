@@ -1,19 +1,20 @@
 defmodule IEC104.Telegram.ObjectSequence do
-  def length(type, number_of_elements) do
+  @moduledoc false
+  def length(type, number_of_element_sets) do
     # TODO: The number 3 here depends on the configured address length (could be 2)
-    3 + type.length() * number_of_elements
+    3 + type.element_set_length() * number_of_element_sets
   end
 
-  def number_of_items([{_address, elements}] = _information_objects) do
-    length(elements)
+  def number_of_items({_address, element_sets} = _information_objects) do
+    length(element_sets)
   end
 
-  def decode(type, information_objects) do
-    decode(type, information_objects, nil)
+  def decode(type, data) do
+    decode(type, data, nil)
   end
 
-  defp decode(_type, <<>>, {address, elements}) do
-    [{address, Enum.reverse(elements)}]
+  defp decode(_type, <<>>, {address, element_sets}) do
+    {address, Enum.reverse(element_sets)}
   end
 
   defp decode(type, data, nil) do
@@ -21,20 +22,20 @@ defmodule IEC104.Telegram.ObjectSequence do
     decode(type, rest, {address, []})
   end
 
-  defp decode(type, data, {address, elements_acc}) do
-    length = type.length()
-    <<elements::bytes-size(length), rest::bitstring>> = data
-    elements = type.decode_elements(elements)
-    object = {address, [elements | elements_acc]}
+  defp decode(type, data, {address, element_sets}) do
+    length = type.element_set_length()
+    <<element_set::bytes-size(length), rest::bitstring>> = data
+    element_set = type.decode_element_set(element_set)
+    object = {address, [element_set | element_sets]}
     decode(type, rest, object)
   end
 
-  def encode(type, [{address, elements}]) do
-    elements =
-      Enum.map(elements, fn elements ->
-        type.encode_elements(elements)
+  def encode(type, {address, element_sets}) do
+    element_sets =
+      Enum.map(element_sets, fn element_set ->
+        type.encode_element_set(element_set)
       end)
 
-    [<<address::24-little>>, elements]
+    [<<address::24-little>>, element_sets]
   end
 end

@@ -1,33 +1,34 @@
 defmodule IEC104.Telegram.ObjectMap do
+  @moduledoc false
   def length(type, number_of_objects) do
     # TODO: The number 3 here depends on the configured address length (could be 2)
-    (3 + type.length()) * number_of_objects
+    (3 + type.element_set_length()) * number_of_objects
   end
 
   def number_of_items(information_objects) do
-    length(information_objects)
+    map_size(information_objects)
   end
 
-  def decode(type, information_objects) do
-    decode(type, information_objects, [])
+  def decode(type, data) do
+    decode(type, data, %{})
   end
 
-  defp decode(_type, <<>>, acc) do
-    Enum.reverse(acc)
+  defp decode(_type, <<>>, information_objects) do
+    information_objects
   end
 
-  defp decode(type, information_objects, acc) do
-    length = type.length()
-    <<address::24-little, elements::bytes-size(length), rest::bitstring>> = information_objects
-    elements = type.decode_elements(elements)
-    object = {address, [elements]}
-    decode(type, rest, [object | acc])
+  defp decode(type, data, information_objects) do
+    length = type.element_set_length()
+    <<address::24-little, element_set::bytes-size(length), rest::bitstring>> = data
+    element_set = type.decode_element_set(element_set)
+    information_objects = Map.put(information_objects, address, element_set)
+    decode(type, rest, information_objects)
   end
 
-  def encode(type, information_objects) do
-    Enum.map(information_objects, fn {address, [elements]} ->
-      elements = type.encode_elements(elements)
-      [<<address::24-little>>, elements]
+  def encode(type, data) do
+    Enum.map(data, fn {address, element_set} ->
+      element_set = type.encode_element_set(element_set)
+      [<<address::24-little>>, element_set]
     end)
   end
 end

@@ -4,12 +4,36 @@ defmodule IEC104.Telegram do
   controlled stations.
   """
 
-  alias IEC104.Telegram.{ObjectMap, ObjectSequence, Type}
-  alias IEC104.Helpers
+  alias IEC104.Telegram.{CauseOfTransmission, ObjectMap, ObjectSequence}
+  alias IEC104.{InformationObject, Helpers}
+
+  @type opts() :: [
+          test?: boolean(),
+          negative_confirmation?: boolean(),
+          originator_address: integer()
+        ]
+
+  @type common_address() :: integer()
+  @type originator_address() :: integer()
+
+  @type information_object_map(element_set) :: %{InformationObject.address() => element_set}
+  @type information_object_sequence(element_set) ::
+          {InformationObject.address(), [element_set, ...]}
+  @type information_object_container(element_set) ::
+          information_object_map(element_set) | information_object_sequence(element_set)
+
+  @type t() :: %__MODULE__{
+          type: InformationObject.type(),
+          test?: boolean(),
+          negative_confirmation?: boolean(),
+          cause_of_transmission: CauseOfTransmission.t(),
+          originator_address: originator_address(),
+          common_address: common_address(),
+          information_objects: information_object_container(InformationObject.element_set())
+        }
 
   defstruct [
     :type,
-    :sequence?,
     :test?,
     :negative_confirmation?,
     :cause_of_transmission,
@@ -18,10 +42,16 @@ defmodule IEC104.Telegram do
     :information_objects
   ]
 
+  @spec new(
+          InformationObject.type(),
+          CauseOfTransmission.t(),
+          common_address(),
+          information_object_container(InformationObject.element_set()),
+          opts()
+        ) :: t()
   def new(type, cause_of_transmission, common_address, information_objects, opts) do
     %__MODULE__{
       type: type,
-      sequence?: Keyword.get(opts, :sequence?, false),
       test?: Keyword.get(opts, :test?, false),
       negative_confirmation?: Keyword.get(opts, :negative_confirmation?, false),
       cause_of_transmission: cause_of_transmission,
@@ -31,12 +61,40 @@ defmodule IEC104.Telegram do
     }
   end
 
+  @spec information_objects(t()) :: information_object_map(InformationObject.element_set())
+  def information_objects(telegram) do
+    case telegram.information_objects do
+      %{} = information_objects ->
+        information_objects
+
+      {address, element_sets} ->
+        element_sets
+        |> Enum.with_index()
+        |> Enum.map(fn {element_set, index} -> {address + index, element_set} end)
+        |> Map.new()
+    end
+  end
+
+  @spec sequence?(t()) :: boolean()
+  def sequence?(%__MODULE__{} = telegram) do
+    sequence?(telegram.information_objects)
+  end
+
+  # TODO: Not sure if this makes dialyzer unhappy
+  def sequence?(information_objects) do
+    case information_objects do
+      %{} -> false
+      {_address, _element_sets} -> true
+    end
+  end
+
+  @doc false
   def decode(
         <<type, structure_qualifier::1, number_of_items::7, test?::1, negative_confirmation?::1,
           cause_of_transmission::6, originator_address::8, common_address::16-little,
           rest::bitstring>>
       ) do
-    type = Type.lookup(type)
+    type = InformationObject.by_id(type)
     object_container = if structure_qualifier == 0, do: ObjectMap, else: ObjectSequence
     information_objects_length = object_container.length(type, number_of_items)
 
@@ -49,10 +107,9 @@ defmodule IEC104.Telegram do
       {:ok,
        %__MODULE__{
          type: type,
-         sequence?: structure_qualifier == 1,
          test?: Helpers.boolean(test?),
          negative_confirmation?: Helpers.boolean(negative_confirmation?),
-         cause_of_transmission: cause_of_transmission,
+         cause_of_transmission: CauseOfTransmission.by_id(cause_of_transmission),
          originator_address: originator_address,
          common_address: common_address,
          information_objects: information_objects
@@ -60,17 +117,19 @@ defmodule IEC104.Telegram do
     end
   end
 
+  @doc false
   def encode(telegram) do
-    structure_qualifier = if telegram.sequence?, do: 1, else: 0
-    object_container = if telegram.sequence?, do: ObjectSequence, else: ObjectMap
+    sequence? = sequence?(telegram.information_objects)
+    object_container = if sequence?, do: ObjectSequence, else: ObjectMap
     number_of_items = object_container.number_of_items(telegram.information_objects)
     information_objects = object_container.encode(telegram.type, telegram.information_objects)
 
     [
-      <<Type.lookup(telegram.type), structure_qualifier::1, number_of_items::7,
-        Helpers.boolean(telegram.test?)::1, Helpers.boolean(telegram.negative_confirmation?)::1,
-        telegram.cause_of_transmission::6, telegram.originator_address::8,
-        telegram.common_address::16-little>>,
+      <<InformationObject.by_name(telegram.type), Helpers.boolean(sequence?)::1,
+        number_of_items::7, Helpers.boolean(telegram.test?)::1,
+        Helpers.boolean(telegram.negative_confirmation?)::1,
+        CauseOfTransmission.by_name(telegram.cause_of_transmission)::6,
+        telegram.originator_address::8, telegram.common_address::16-little>>,
       information_objects
     ]
   end
