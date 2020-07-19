@@ -89,12 +89,12 @@ defmodule IEC104.ControllingConnection do
 
   def connected(:info, {:tcp, _port, frame}, data) do
     case Frame.decode(frame) do
-      {:ok, %Frame{apci: %ControlFunction{function: :start_data_transfer_confirmation}}, _rest} ->
+      {:ok, %ControlFunction{function: :start_data_transfer_confirmation}, _rest} ->
         # TODO: Transfer to new state?
         :keep_state_and_data
 
-      {:ok, %Frame{apci: %ControlFunction{function: :test_frame_activation}}, _rest} ->
-        %Frame{apci: %ControlFunction{function: :test_frame_confirmation}}
+      {:ok, %ControlFunction{function: :test_frame_activation}, _rest} ->
+        %ControlFunction{function: :test_frame_confirmation}
         |> send_frame(data)
 
         :keep_state_and_data
@@ -102,7 +102,7 @@ defmodule IEC104.ControllingConnection do
   end
 
   def connected({:call, from}, :start_data_transfer, data) do
-    %Frame{apci: %ControlFunction{function: :start_data_transfer_activation}}
+    %ControlFunction{function: :start_data_transfer_activation}
     |> send_frame(data)
 
     {:keep_state_and_data, [{:reply, from, :ok}]}

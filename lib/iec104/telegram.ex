@@ -92,7 +92,7 @@ defmodule IEC104.Telegram do
   def decode(
         <<type, structure_qualifier::1, number_of_items::7, test?::1, negative_confirmation?::1,
           cause_of_transmission::6, originator_address::8, common_address::16-little,
-          rest::bitstring>>
+          information_objects::bitstring>>
       ) do
     type = InformationObject.by_id(type)
     object_container = if structure_qualifier == 0, do: ObjectMap, else: ObjectSequence
@@ -100,8 +100,8 @@ defmodule IEC104.Telegram do
 
     # I already check this length in Frame.ex, since that has the length of the telegram in bytes
     # Of course, this is a semantic length check - does the data type length actually match that of the frame?
-    if information_objects_length >= byte_size(rest) do
-      <<information_objects::bytes-size(information_objects_length), rest::bitstring>> = rest
+    if information_objects_length == byte_size(information_objects) do
+      <<information_objects::bytes-size(information_objects_length)>> = information_objects
       information_objects = object_container.decode(type, information_objects)
 
       {:ok,
@@ -113,7 +113,7 @@ defmodule IEC104.Telegram do
          originator_address: originator_address,
          common_address: common_address,
          information_objects: information_objects
-       }, rest}
+       }}
     end
   end
 

@@ -9,12 +9,7 @@ defmodule IEC104.FrameTest do
     test "startdt act" do
       encoded = <<0x68, 0x04, 0x07, 0x00, 0x00, 0x00>>
 
-      decoded = %Frame{
-        apci: %ControlFunction{
-          function: :start_data_transfer_activation
-        },
-        telegram: nil
-      }
+      decoded = %ControlFunction{function: :start_data_transfer_activation}
 
       assert {:ok, decoded, <<>>} == Frame.decode(encoded)
       assert {:ok, encoded} == Frame.encode(decoded)
@@ -23,12 +18,7 @@ defmodule IEC104.FrameTest do
     test "startdt con" do
       encoded = <<0x68, 0x04, 0x0B, 0x00, 0x00, 0x00>>
 
-      decoded = %Frame{
-        apci: %ControlFunction{
-          function: :start_data_transfer_confirmation
-        },
-        telegram: nil
-      }
+      decoded = %ControlFunction{function: :start_data_transfer_confirmation}
 
       assert {:ok, decoded, <<>>} == Frame.decode(encoded)
       assert {:ok, encoded} == Frame.encode(decoded)
@@ -39,12 +29,7 @@ defmodule IEC104.FrameTest do
     test "received sequence number" do
       encoded = <<0x68, 0x04, 0x01, 0x00, 0x14, 0x75>>
 
-      decoded = %Frame{
-        apci: %SupervisoryFunction{
-          received_sequence_number: 14986
-        },
-        telegram: nil
-      }
+      decoded = %SupervisoryFunction{received_sequence_number: 14986}
 
       assert {:ok, decoded, <<>>} == Frame.decode(encoded)
       assert {:ok, encoded} == Frame.encode(decoded)
@@ -57,11 +42,9 @@ defmodule IEC104.FrameTest do
         <<0x68, 0x19, 0xBE, 0x01, 0x00, 0x00, 0x24, 0x01, 0x03, 0x00, 0x91, 0x01, 0x04, 0x00,
           0x00, 0xBC, 0xF4, 0x47, 0x42, 0x00, 0x98, 0x3A, 0x2D, 0x8E, 0x42, 0x06, 0x14>>
 
-      decoded = %Frame{
-        apci: %InformationTransfer{
-          sent_sequence_number: 223,
-          received_sequence_number: 0
-        },
+      decoded = %InformationTransfer{
+        sent_sequence_number: 223,
+        received_sequence_number: 0,
         telegram: %Telegram{
           type: InformationObject.M_ME_TF_1,
           cause_of_transmission: :spontaneous,
@@ -98,11 +81,9 @@ defmodule IEC104.FrameTest do
           0x09, 0x00, 0x11, 0x30, 0x00, 0x90, 0x09, 0x00, 0x28, 0x30, 0x00, 0x25, 0x09, 0x00,
           0x29, 0x30, 0x00, 0x75, 0x00, 0x00, 0x2E, 0x30, 0x00, 0xAE, 0x05, 0x00>>
 
-      decoded = %Frame{
-        apci: %InformationTransfer{
-          received_sequence_number: 62,
-          sent_sequence_number: 2605
-        },
+      decoded = %InformationTransfer{
+        received_sequence_number: 62,
+        sent_sequence_number: 2605,
         telegram: %Telegram{
           type: InformationObject.M_ME_NB_1,
           cause_of_transmission: :spontaneous,
@@ -132,11 +113,9 @@ defmodule IEC104.FrameTest do
           0x00, 0xBE, 0x09, 0x00, 0x90, 0x09, 0x00, 0x75, 0x00, 0x00, 0x25, 0x09, 0x00, 0x75,
           0x00, 0x00, 0x0F, 0x0A, 0x00, 0xAE, 0x05, 0x00>>
 
-      decoded = %Frame{
-        apci: %InformationTransfer{
-          received_sequence_number: 62,
-          sent_sequence_number: 2605
-        },
+      decoded = %InformationTransfer{
+        received_sequence_number: 62,
+        sent_sequence_number: 2605,
         telegram: %Telegram{
           type: InformationObject.M_ME_NB_1,
           cause_of_transmission: :spontaneous,

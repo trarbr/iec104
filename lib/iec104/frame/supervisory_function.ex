@@ -12,8 +12,9 @@ defmodule IEC104.Frame.SupervisoryFunction do
   end
 
   def decode(<<_::7, 1::1, _::8, number::bytes-size(2)>>) do
-    %__MODULE__{
-      received_sequence_number: SequenceNumber.decode(number)
-    }
+    {:ok,
+     %__MODULE__{
+       received_sequence_number: SequenceNumber.decode(number)
+     }}
   end
 end

@@ -40,12 +40,12 @@ defmodule IEC104.ControllingConnectionTest do
       {:ok, _pid} = ControllingConnection.start_link(port: context.port)
       {:ok, socket} = :gen_tcp.accept(context.socket)
 
-      %Frame{apci: %ControlFunction{function: :test_frame_activation}}
+      %ControlFunction{function: :test_frame_activation}
       |> send_frame(socket)
 
       assert {:ok, frame} = :gen_tcp.recv(socket, 0)
 
-      assert {:ok, %Frame{apci: %ControlFunction{function: :test_frame_confirmation}}, ""} ==
+      assert {:ok, %ControlFunction{function: :test_frame_confirmation}, ""} ==
                Frame.decode(frame)
     end
 
