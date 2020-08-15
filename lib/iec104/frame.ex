@@ -20,8 +20,7 @@ defmodule IEC104.Frame do
     {:ok, <<@start_byte, 4, apci::bytes>>}
   end
 
-  # TODO: handle decode when packet too small
-  @spec decode(bitstring()) :: {:ok, IEC104.Frame.t(), bitstring}
+  @spec decode(bitstring()) :: {:ok, IEC104.Frame.t(), bitstring} | {:error, :in_frame}
   def decode(<<@start_byte, length, control_flags::bytes-size(4), rest::bitstring>>)
       when byte_size(rest) >= length - 4 do
     case control_flags do
@@ -39,5 +38,9 @@ defmodule IEC104.Frame do
         {:ok, frame} = ControlFunction.decode(control_flags)
         {:ok, frame, rest}
     end
+  end
+
+  def decode(_bytes) do
+    {:error, :in_frame}
   end
 end

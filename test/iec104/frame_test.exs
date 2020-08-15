@@ -5,6 +5,14 @@ defmodule IEC104.FrameTest do
   alias IEC104.Frame.{ControlFunction, InformationTransfer, SupervisoryFunction}
   alias IEC104.{InformationElement, InformationObject, Telegram}
 
+  describe "incomplete frames" do
+    test "returns an error if the frame is incomplete" do
+      encoded = <<0x68, 0x04, 0x07, 0x00, 0x00>>
+
+      assert {:error, :in_frame} == Frame.decode(encoded)
+    end
+  end
+
   describe "unnumbered control functions (U-format)" do
     test "startdt act" do
       encoded = <<0x68, 0x04, 0x07, 0x00, 0x00, 0x00>>
