@@ -104,6 +104,10 @@ defmodule IEC104.ControllingConnection do
     :gen_statem.call(conn, :start_data_transfer)
   end
 
+  def stop_data_transfer(conn) do
+    :gen_statem.call(conn, :stop_data_transfer)
+  end
+
   @impl :gen_statem
   def callback_mode(), do: :state_functions
 
@@ -146,6 +150,14 @@ defmodule IEC104.ControllingConnection do
   end
 
   @doc false
+  def connected({:call, from}, :start_data_transfer, data) do
+    %ControlFunction{function: :start_data_transfer_activation}
+    |> send_frame(data)
+
+    {:keep_state_and_data,
+     [{:reply, from, :ok}, {:state_timeout, data.response_timeout, :response}]}
+  end
+
   def connected(:info, {:tcp_closed, _port}, data) do
     {:next_state, :disconnected, %{data | socket: nil},
      [{:state_timeout, data.connect_backoff, :connect}]}
@@ -175,19 +187,20 @@ defmodule IEC104.ControllingConnection do
     end
   end
 
-  def connected({:call, from}, :start_data_transfer, data) do
-    %ControlFunction{function: :start_data_transfer_activation}
-    |> send_frame(data)
-
-    {:keep_state_and_data,
-     [{:reply, from, :ok}, {:state_timeout, data.response_timeout, :response}]}
-  end
-
   def connected(:state_timeout, :response, data) do
     :ok = :gen_tcp.close(data.socket)
 
     {:next_state, :disconnected, %{data | socket: nil},
      [{:state_timeout, data.connect_backoff, :connect}]}
+  end
+
+  @doc false
+  def data_transfer({:call, from}, :stop_data_transfer, data) do
+    %ControlFunction{function: :stop_data_transfer_activation}
+    |> send_frame(data)
+
+    {:keep_state_and_data,
+     [{:reply, from, :ok}, {:state_timeout, data.response_timeout, :response}]}
   end
 
   def data_transfer(:info, {:tcp_closed, _port}, data) do
@@ -204,6 +217,18 @@ defmodule IEC104.ControllingConnection do
     data.buffer
     |> Frame.decode()
     |> case do
+      {:ok, %InformationTransfer{} = frame, rest} ->
+        _ = notify_handler(data, frame.telegram)
+
+        # TODO: Might have to cancel the state_timeout here, if the sequence counter matches expected
+        {data, actions} =
+          {%{data | buffer: rest, received_sequence_number: frame.sent_sequence_number}, []}
+          |> data_transfer_idle_timeout()
+          |> sequence_synchronization()
+          |> handle_frame()
+
+        {:keep_state, data, actions}
+
       {:ok, %ControlFunction{function: :test_frame_activation}, rest} ->
         %ControlFunction{function: :test_frame_confirmation}
         |> send_frame(data)
@@ -223,17 +248,22 @@ defmodule IEC104.ControllingConnection do
 
         {:keep_state, data, actions}
 
-      {:ok, %InformationTransfer{} = frame, rest} ->
-        _ = notify_handler(data, frame.telegram)
+      {:ok, %ControlFunction{function: :stop_data_transfer_confirmation}, rest} ->
+        _ = notify_handler(data, :connected)
 
-        # TODO: Might have to cancel the state_timeout here, if the sequence counter matches expected
-        {data, actions} =
-          {%{data | buffer: rest, received_sequence_number: frame.sent_sequence_number}, []}
-          |> data_transfer_idle_timeout()
-          |> sequence_synchronization()
-          |> handle_frame()
-
-        {:keep_state, data, actions}
+        {:next_state, :connected,
+         %{
+           data
+           | buffer: rest,
+             socket: nil,
+             received_sequence_number: 0,
+             acknowledged_received_sequence_number: 0,
+             sequence_synchronization_timer_running?: false
+         },
+         [
+           {{:timeout, :sequence_synchronization}, :cancel},
+           {{:timeout, :idle}, :cancel}
+         ]}
 
       {:error, :in_frame} ->
         :keep_state_and_data

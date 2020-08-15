@@ -16,7 +16,6 @@ defmodule IEC104.FrameTest do
   describe "unnumbered control functions (U-format)" do
     test "startdt act" do
       encoded = <<0x68, 0x04, 0x07, 0x00, 0x00, 0x00>>
-
       decoded = %ControlFunction{function: :start_data_transfer_activation}
 
       assert {:ok, decoded, <<>>} == Frame.decode(encoded)
@@ -25,8 +24,39 @@ defmodule IEC104.FrameTest do
 
     test "startdt con" do
       encoded = <<0x68, 0x04, 0x0B, 0x00, 0x00, 0x00>>
-
       decoded = %ControlFunction{function: :start_data_transfer_confirmation}
+
+      assert {:ok, decoded, <<>>} == Frame.decode(encoded)
+      assert {:ok, encoded} == Frame.encode(decoded)
+    end
+
+    test "stopdt act" do
+      encoded = <<0x68, 0x04, 0x13, 0x00, 0x00, 0x00>>
+      decoded = %ControlFunction{function: :stop_data_transfer_activation}
+
+      assert {:ok, decoded, <<>>} == Frame.decode(encoded)
+      assert {:ok, encoded} == Frame.encode(decoded)
+    end
+
+    test "stopdt con" do
+      encoded = <<0x68, 0x04, 0x23, 0x00, 0x00, 0x00>>
+      decoded = %ControlFunction{function: :stop_data_transfer_confirmation}
+
+      assert {:ok, decoded, <<>>} == Frame.decode(encoded)
+      assert {:ok, encoded} == Frame.encode(decoded)
+    end
+
+    test "testfr act" do
+      encoded = <<0x68, 0x04, 0x43, 0x00, 0x00, 0x00>>
+      decoded = %ControlFunction{function: :test_frame_activation}
+
+      assert {:ok, decoded, <<>>} == Frame.decode(encoded)
+      assert {:ok, encoded} == Frame.encode(decoded)
+    end
+
+    test "testfr con" do
+      encoded = <<0x68, 0x04, 0x83, 0x00, 0x00, 0x00>>
+      decoded = %ControlFunction{function: :test_frame_confirmation}
 
       assert {:ok, decoded, <<>>} == Frame.decode(encoded)
       assert {:ok, encoded} == Frame.encode(decoded)
@@ -36,7 +66,6 @@ defmodule IEC104.FrameTest do
   describe "numbered supervisory functions (S-format)" do
     test "received sequence number" do
       encoded = <<0x68, 0x04, 0x01, 0x00, 0x14, 0x75>>
-
       decoded = %SupervisoryFunction{received_sequence_number: 14986}
 
       assert {:ok, decoded, <<>>} == Frame.decode(encoded)

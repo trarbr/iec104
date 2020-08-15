@@ -35,7 +35,7 @@ defmodule IEC104.Frame do
         {:ok, frame, rest}
 
       <<_::6, 1::1, 1::1, _rest::bitstring>> ->
-        {:ok, frame} = ControlFunction.decode(control_flags)
+        frame = ControlFunction.decode(control_flags)
         {:ok, frame, rest}
     end
   end

@@ -192,6 +192,21 @@ defmodule IEC104.ControllingConnectionTest do
 
       assert {:error, :closed} = :gen_tcp.recv(context.socket, 0)
     end
+
+    test "transitions to connected when data transfer is stopped", context do
+      context = context |> connect() |> data_transfer()
+      ControllingConnection.stop_data_transfer(context.conn)
+
+      assert {:ok, frame} = :gen_tcp.recv(context.socket, 0)
+
+      assert {:ok, %ControlFunction{function: :stop_data_transfer_activation}, ""} ==
+               Frame.decode(frame)
+
+      %ControlFunction{function: :stop_data_transfer_confirmation}
+      |> send_frame(context.socket)
+
+      assert_receive {ControllingConnection, :connected}
+    end
   end
 
   defp server_socket(context) do
@@ -220,7 +235,9 @@ defmodule IEC104.ControllingConnectionTest do
     %ControlFunction{function: :start_data_transfer_confirmation}
     |> send_frame(context.socket)
 
-    context
+    receive do
+      {ControllingConnection, :data_transfer} -> context
+    end
   end
 
   defp send_frame(frame, socket) do
