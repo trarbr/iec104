@@ -13,7 +13,7 @@ defmodule IEC104.ControllingConnectionTest do
     test "attempts to connect when started", context do
       {:ok, _pid} = ControllingConnection.start_link(port: context.listen_port)
 
-      assert {:ok, socket} = :gen_tcp.accept(context.listen_socket)
+      assert {:ok, _socket} = :gen_tcp.accept(context.listen_socket)
       assert_receive {ControllingConnection, :connected}
     end
 
@@ -22,14 +22,14 @@ defmodule IEC104.ControllingConnectionTest do
 
       start_and_wait = fn ->
         ControllingConnection.start_link(port: context.listen_port, connect_backoff: 10)
-        Process.sleep(250)
+        Process.sleep(1000)
       end
 
       assert capture_log(start_and_wait) =~ "could not connect"
 
       {:ok, listen_socket} = :gen_tcp.listen(context.listen_port, [:binary])
 
-      assert {:ok, socket} = :gen_tcp.accept(listen_socket)
+      assert {:ok, _socket} = :gen_tcp.accept(listen_socket)
       assert_receive {ControllingConnection, :connected}
     end
   end
@@ -39,7 +39,7 @@ defmodule IEC104.ControllingConnectionTest do
 
     test "transitions to data transfer on confirmation", context do
       context = connect(context)
-      ControllingConnection.start_data_transfer(context.conn)
+      assert :ok = ControllingConnection.start_data_transfer(context.conn)
 
       assert {:ok, frame} = :gen_tcp.recv(context.socket, 0)
 
@@ -54,11 +54,20 @@ defmodule IEC104.ControllingConnectionTest do
 
     test "disconnects if test frame confirmation is not received", context do
       context = connect(context, response_timeout: 1)
-      ControllingConnection.start_data_transfer(context.conn)
+      assert :ok = ControllingConnection.start_data_transfer(context.conn)
 
       {:ok, _start_data_transfer_activation_frame} = :gen_tcp.recv(context.socket, 0)
 
       assert {:error, :closed} = :gen_tcp.recv(context.socket, 0)
+    end
+
+    test "reconnects if connection is closed", context do
+      context = connect(context, connect_backoff: 10)
+
+      :ok = :gen_tcp.close(context.socket)
+
+      assert_receive {ControllingConnection, :disconnected}
+      assert_receive {ControllingConnection, :connected}
     end
   end
 
@@ -89,6 +98,18 @@ defmodule IEC104.ControllingConnectionTest do
                Frame.decode(frame)
     end
 
+    test "disconnects if test frame confirmation is not received", context do
+      context =
+        context
+        |> connect(response_timeout: 50, data_transfer_idle_timeout: 1)
+        |> data_transfer()
+
+      {:ok, _test_frame_activation} = :gen_tcp.recv(context.socket, 0)
+
+      assert_receive {ControllingConnection, :disconnected}
+      assert {:error, :closed} = :gen_tcp.recv(context.socket, 0)
+    end
+
     test "notifies handler when it receives a telegram", context do
       context = context |> connect() |> data_transfer()
 
@@ -106,7 +127,7 @@ defmodule IEC104.ControllingConnectionTest do
     test "sends supervisory frame on sequence synchronization timeout", context do
       context =
         context
-        |> connect(sequence_synchronization_timeout: 1)
+        |> connect(send_telegram_receipt_timeout: 1)
         |> data_transfer()
 
       Enum.each(0..:rand.uniform(10), fn n ->
@@ -127,11 +148,13 @@ defmodule IEC104.ControllingConnectionTest do
     test "performs sequence synchronization correctly for a batch of telegrams", context do
       context =
         context
-        |> connect(sequence_synchronization_timeout: 100)
+        |> connect(send_telegram_receipt_timeout: 100)
         |> data_transfer()
 
+      # This goes to a maximum of 8 telegrams, to avoid crossing the
+      # send_telegram_receipt_threshold
       last_sent_sequence_number =
-        Enum.reduce(0..2, 1, fn n, _acc ->
+        Enum.reduce(0..:rand.uniform(8), 0, fn n, _acc ->
           %InformationTransfer{
             received_sequence_number: 0,
             sent_sequence_number: n,
@@ -149,13 +172,27 @@ defmodule IEC104.ControllingConnectionTest do
                Frame.decode(frame)
     end
 
+    test "disconnects when information transfer contains wrong sent_sequence_number", context do
+      context = context |> connect() |> data_transfer()
+
+      %InformationTransfer{
+        received_sequence_number: 0,
+        sent_sequence_number: 1,
+        telegram: telegram()
+      }
+      |> send_frame(context.socket)
+
+      assert_receive {ControllingConnection, :disconnected}
+      assert {:error, :closed} = :gen_tcp.recv(context.socket, 0)
+    end
+
     test "performs sequence synchronization when sequence synchronization threshold is reached",
          context do
-      threshold = 8
+      threshold = :rand.uniform(20)
 
       context =
         context
-        |> connect(sequence_synchronization_threshold: threshold)
+        |> connect(send_telegram_receipt_threshold: threshold)
         |> data_transfer()
 
       Enum.each(0..(threshold - 1), fn n ->
@@ -167,6 +204,7 @@ defmodule IEC104.ControllingConnectionTest do
         |> send_frame(context.socket)
       end)
 
+      # Ensure that no message is sent before the threshold is reached
       assert {:error, :timeout} = :gen_tcp.recv(context.socket, 0, 100)
 
       %InformationTransfer{
@@ -182,15 +220,122 @@ defmodule IEC104.ControllingConnectionTest do
                Frame.decode(frame)
     end
 
-    test "disconnects if test frame confirmation is not received", context do
-      context =
-        context
-        |> connect(response_timeout: 1, data_transfer_idle_timeout: 50)
-        |> data_transfer()
+    test "can send a telegram", context do
+      context = context |> connect() |> data_transfer()
 
-      {:ok, _test_frame_activation} = :gen_tcp.recv(context.socket, 0)
+      expected = %InformationTransfer{
+        received_sequence_number: 0,
+        sent_sequence_number: 0,
+        telegram: telegram()
+      }
 
+      ControllingConnection.send_telegram(context.conn, expected.telegram)
+
+      assert {:ok, frame} = :gen_tcp.recv(context.socket, 0)
+      assert {:ok, expected, <<>>} == Frame.decode(frame)
+    end
+
+    test "increments sequence numbers correctly when sending telegrams", context do
+      context = context |> connect() |> data_transfer()
+
+      Enum.each(0..9, fn n ->
+        assert {:ok, sequence_number} =
+                 ControllingConnection.send_telegram(context.conn, telegram())
+
+        assert sequence_number == n + 1
+        assert {:ok, frame} = :gen_tcp.recv(context.socket, 0)
+
+        assert {:ok, %InformationTransfer{sent_sequence_number: ^n}, <<>>} = Frame.decode(frame)
+      end)
+    end
+
+    test "sends an updated received_sequence_number when sending a telegram", context do
+      context = context |> connect() |> data_transfer()
+
+      # This goes to a maximum of 8 telegrams, to avoid crossing the
+      # send_telegram_receipt_threshold
+      last_sent_sequence_number =
+        Enum.reduce(0..:rand.uniform(7), 0, fn n, _acc ->
+          %InformationTransfer{
+            received_sequence_number: 0,
+            sent_sequence_number: n,
+            telegram: telegram()
+          }
+          |> send_frame(context.socket)
+
+          n
+        end)
+
+      Process.sleep(50)
+
+      {:ok, _sequence_number} = ControllingConnection.send_telegram(context.conn, telegram())
+
+      {:ok, frame} = :gen_tcp.recv(context.socket, 0)
+
+      assert {:ok, %InformationTransfer{received_sequence_number: received_sequence_number}, _} =
+               Frame.decode(frame)
+
+      assert received_sequence_number == last_sent_sequence_number + 1
+    end
+
+    test "notifies handler when acknowledgement of information transfer is received",
+         context do
+      context = context |> connect() |> data_transfer()
+
+      {:ok, sequence_number} = ControllingConnection.send_telegram(context.conn, telegram())
+
+      %SupervisoryFunction{received_sequence_number: sequence_number}
+      |> send_frame(context.socket)
+
+      assert_receive {ControllingConnection, ^sequence_number}
+    end
+
+    test "does not notify handler when wrong received_sequence_number is received", context do
+      context = context |> connect() |> data_transfer()
+
+      wrong_sequence_number = -:rand.uniform(10)
+
+      %SupervisoryFunction{received_sequence_number: wrong_sequence_number}
+      |> send_frame(context.socket)
+
+      refute_receive {ControllingConnection, ^wrong_sequence_number}
+    end
+
+    test "disconnects when wrong received_sequence_number is received", context do
+      context = context |> connect() |> data_transfer()
+
+      wrong_sequence_number = :rand.uniform(10)
+
+      %SupervisoryFunction{received_sequence_number: wrong_sequence_number}
+      |> send_frame(context.socket)
+
+      assert_receive {ControllingConnection, :disconnected}
       assert {:error, :closed} = :gen_tcp.recv(context.socket, 0)
+    end
+
+    test "disconnects when no acknowledgement of information transfer is received", context do
+      context = context |> connect(response_timeout: 1) |> data_transfer()
+
+      {:ok, _sequence_number} = ControllingConnection.send_telegram(context.conn, telegram())
+      {:ok, _frame} = :gen_tcp.recv(context.socket, 0)
+
+      assert_receive {ControllingConnection, :disconnected}
+      assert {:error, :closed} = :gen_tcp.recv(context.socket, 0)
+    end
+
+    test "information transfer can be used to acknowledge information transfer", context do
+      context = context |> connect() |> data_transfer()
+
+      {:ok, sequence_number} = ControllingConnection.send_telegram(context.conn, telegram())
+
+      %InformationTransfer{
+        received_sequence_number: sequence_number,
+        sent_sequence_number: 0,
+        telegram: telegram()
+      }
+      |> send_frame(context.socket)
+
+      assert_receive {ControllingConnection, ^sequence_number}
     end
 
     test "transitions to connected when data transfer is stopped", context do
@@ -205,6 +350,15 @@ defmodule IEC104.ControllingConnectionTest do
       %ControlFunction{function: :stop_data_transfer_confirmation}
       |> send_frame(context.socket)
 
+      assert_receive {ControllingConnection, :connected}
+    end
+
+    test "reconnects if connection is closed", context do
+      context = context |> connect(connect_backoff: 10) |> data_transfer()
+
+      :ok = :gen_tcp.close(context.socket)
+
+      assert_receive {ControllingConnection, :disconnected}
       assert_receive {ControllingConnection, :connected}
     end
   end
@@ -227,7 +381,7 @@ defmodule IEC104.ControllingConnectionTest do
   end
 
   defp data_transfer(context) do
-    ControllingConnection.start_data_transfer(context.conn)
+    :ok = ControllingConnection.start_data_transfer(context.conn)
     {:ok, frame} = :gen_tcp.recv(context.socket, 0)
 
     {:ok, %ControlFunction{function: :start_data_transfer_activation}, ""} = Frame.decode(frame)

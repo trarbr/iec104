@@ -2,7 +2,7 @@ defmodule IEC104.ControllingConnection do
   require Logger
 
   alias IEC104.Frame
-  alias IEC104.Frame.{ControlFunction, InformationTransfer, SupervisoryFunction}
+  alias IEC104.Frame.{ControlFunction, InformationTransfer, SequenceNumber, SupervisoryFunction}
 
   @behaviour :gen_statem
 
@@ -13,14 +13,16 @@ defmodule IEC104.ControllingConnection do
     :connect_timeout,
     :connect_backoff,
     :response_timeout,
-    :sequence_synchronization_timeout,
-    :sequence_synchronization_threshold,
+    :send_telegram_receipt_timeout,
+    :send_telegram_receipt_threshold,
     :data_transfer_idle_timeout,
     :buffer,
     :socket,
-    :received_sequence_number,
-    :acknowledged_received_sequence_number,
-    :sequence_synchronization_timer_running?
+    :telegrams_received,
+    :telegrams_receipted,
+    :telegram_receipt_scheduled?,
+    :telegrams_sent,
+    :telegmams_delivered
   ]
 
   @options_schema [
@@ -62,16 +64,16 @@ defmodule IEC104.ControllingConnection do
       """,
       default: 15_000
     ],
-    sequence_synchronization_timeout: [
+    send_telegram_receipt_timeout: [
       type: :pos_integer,
       doc: """
-      The maximum time to wait (in milliseconds) before sending a receipt for
+      The maximum time to wait (in milliseconds) before sending an receipt for
       received telegrams. This timeout is called t2 by the standard. Minimum
       is 1000 ms, maximum is 255_000 ms.
       """,
       default: 10_000
     ],
-    sequence_synchronization_threshold: [
+    send_telegram_receipt_threshold: [
       type: :pos_integer,
       doc: """
       The maximum number of telegrams that can be received before sending a
@@ -108,6 +110,10 @@ defmodule IEC104.ControllingConnection do
     :gen_statem.call(conn, :stop_data_transfer)
   end
 
+  def send_telegram(conn, telegram) do
+    :gen_statem.call(conn, {:send_telegram, telegram})
+  end
+
   @impl :gen_statem
   def callback_mode(), do: :state_functions
 
@@ -120,14 +126,15 @@ defmodule IEC104.ControllingConnection do
       connect_timeout: Keyword.fetch!(args, :connect_timeout),
       connect_backoff: Keyword.fetch!(args, :connect_backoff),
       response_timeout: Keyword.fetch!(args, :response_timeout),
-      sequence_synchronization_timeout: Keyword.fetch!(args, :sequence_synchronization_timeout),
-      sequence_synchronization_threshold:
-        Keyword.fetch!(args, :sequence_synchronization_threshold),
+      send_telegram_receipt_timeout: Keyword.fetch!(args, :send_telegram_receipt_timeout),
+      send_telegram_receipt_threshold: Keyword.fetch!(args, :send_telegram_receipt_threshold),
       data_transfer_idle_timeout: Keyword.fetch!(args, :data_transfer_idle_timeout),
       buffer: <<>>,
-      received_sequence_number: 0,
-      acknowledged_received_sequence_number: 0,
-      sequence_synchronization_timer_running?: false
+      telegrams_received: 0,
+      telegrams_receipted: 0,
+      telegram_receipt_scheduled?: false,
+      telegrams_sent: 0,
+      telegmams_delivered: 0
     }
 
     actions = [{:next_event, :internal, :connect}]
@@ -159,8 +166,8 @@ defmodule IEC104.ControllingConnection do
   end
 
   def connected(:info, {:tcp_closed, _port}, data) do
-    {:next_state, :disconnected, %{data | socket: nil},
-     [{:state_timeout, data.connect_backoff, :connect}]}
+    {data, actions} = disconnect({data, []})
+    {:next_state, :disconnected, data, actions}
   end
 
   def connected(:info, {:tcp, _port, frame}, data) do
@@ -178,7 +185,7 @@ defmodule IEC104.ControllingConnection do
         {data, actions} =
           {%{data | buffer: rest}, []}
           |> data_transfer_idle_timeout()
-          |> handle_frame()
+          |> handle_next_frame()
 
         {:next_state, :data_transfer, data, actions}
 
@@ -188,13 +195,33 @@ defmodule IEC104.ControllingConnection do
   end
 
   def connected(:state_timeout, :response, data) do
-    :ok = :gen_tcp.close(data.socket)
-
-    {:next_state, :disconnected, %{data | socket: nil},
-     [{:state_timeout, data.connect_backoff, :connect}]}
+    {data, actions} = disconnect({data, []})
+    {:next_state, :disconnected, data, actions}
   end
 
   @doc false
+  def data_transfer({:call, from}, {:send_telegram, telegram}, data) do
+    %InformationTransfer{
+      sent_sequence_number: data.telegrams_sent,
+      received_sequence_number: data.telegrams_received,
+      telegram: telegram
+    }
+    |> send_frame(data)
+
+    {:keep_state,
+     %{
+       data
+       | telegrams_receipted: data.telegrams_received,
+         telegram_receipt_scheduled?: false,
+         telegrams_sent: SequenceNumber.increment(data.telegrams_sent)
+     },
+     [
+       {:reply, from, {:ok, SequenceNumber.increment(data.telegrams_sent)}},
+       {{:timeout, :send_telegram_receipt}, :cancel},
+       {:state_timeout, data.response_timeout, :response}
+     ]}
+  end
+
   def data_transfer({:call, from}, :stop_data_transfer, data) do
     %ControlFunction{function: :stop_data_transfer_activation}
     |> send_frame(data)
@@ -204,8 +231,12 @@ defmodule IEC104.ControllingConnection do
   end
 
   def data_transfer(:info, {:tcp_closed, _port}, data) do
-    {:next_state, :disconnected, %{data | socket: nil},
-     [{:state_timeout, data.connect_backoff, :connect}]}
+    {data, actions} =
+      {data, []}
+      |> reset_data_transfer()
+      |> disconnect()
+
+    {:next_state, :disconnected, data, actions}
   end
 
   def data_transfer(:info, {:tcp, _port, frame}, data) do
@@ -218,16 +249,48 @@ defmodule IEC104.ControllingConnection do
     |> Frame.decode()
     |> case do
       {:ok, %InformationTransfer{} = frame, rest} ->
-        _ = notify_handler(data, frame.telegram)
+        if valid_received_sequence_number?(data, frame.received_sequence_number) and
+             valid_sent_sequence_number?(data, frame.sent_sequence_number) do
+          _ = notify_handler(data, frame.telegram)
 
-        # TODO: Might have to cancel the state_timeout here, if the sequence counter matches expected
-        {data, actions} =
-          {%{data | buffer: rest, received_sequence_number: frame.sent_sequence_number}, []}
-          |> data_transfer_idle_timeout()
-          |> sequence_synchronization()
-          |> handle_frame()
+          {data, actions} =
+            {%{
+               data
+               | buffer: rest,
+                 telegrams_received: SequenceNumber.increment(data.telegrams_received)
+             }, []}
+            |> handle_telegram_receipt(frame.received_sequence_number)
+            |> data_transfer_idle_timeout()
+            |> maybe_schedule_telegram_receipt()
+            |> handle_next_frame()
 
-        {:keep_state, data, actions}
+          {:keep_state, data, actions}
+        else
+          {data, actions} =
+            {data, []}
+            |> reset_data_transfer()
+            |> disconnect()
+
+          {:next_state, :disconnected, data, actions}
+        end
+
+      {:ok, %SupervisoryFunction{} = frame, rest} ->
+        if valid_received_sequence_number?(data, frame.received_sequence_number) do
+          {data, actions} =
+            {%{data | buffer: rest}, []}
+            |> handle_telegram_receipt(frame.received_sequence_number)
+            |> data_transfer_idle_timeout()
+            |> handle_next_frame()
+
+          {:keep_state, data, actions}
+        else
+          {data, actions} =
+            {data, []}
+            |> reset_data_transfer()
+            |> disconnect()
+
+          {:next_state, :disconnected, data, actions}
+        end
 
       {:ok, %ControlFunction{function: :test_frame_activation}, rest} ->
         %ControlFunction{function: :test_frame_confirmation}
@@ -236,74 +299,132 @@ defmodule IEC104.ControllingConnection do
         {data, actions} =
           {%{data | buffer: rest}, []}
           |> data_transfer_idle_timeout()
-          |> handle_frame()
+          |> handle_next_frame()
 
         {:keep_state, data, actions}
 
       {:ok, %ControlFunction{function: :test_frame_confirmation}, rest} ->
         {data, actions} =
-          {%{data | buffer: rest}, [{:state_timeout, :cancel}]}
+          {%{data | buffer: rest}, [{{:timeout, :test_frame_confirmation}, :cancel}]}
           |> data_transfer_idle_timeout()
-          |> handle_frame()
+          |> handle_next_frame()
 
         {:keep_state, data, actions}
 
       {:ok, %ControlFunction{function: :stop_data_transfer_confirmation}, rest} ->
         _ = notify_handler(data, :connected)
 
-        {:next_state, :connected,
-         %{
-           data
-           | buffer: rest,
-             socket: nil,
-             received_sequence_number: 0,
-             acknowledged_received_sequence_number: 0,
-             sequence_synchronization_timer_running?: false
-         },
-         [
-           {{:timeout, :sequence_synchronization}, :cancel},
-           {{:timeout, :idle}, :cancel}
-         ]}
+        {data, actions} =
+          {%{data | buffer: rest}, []}
+          |> reset_data_transfer()
+          |> handle_next_frame()
+
+        {:next_state, :connected, data, actions}
 
       {:error, :in_frame} ->
         :keep_state_and_data
     end
   end
 
-  def data_transfer(:internal, :sequence_synchronization, data) do
-    send_supervisory_function(data)
+  def data_transfer(:internal, :send_telegram_receipt, data) do
+    send_telegram_receipt(data)
   end
 
-  def data_transfer({:timeout, :sequence_synchronization}, :data_transfer, data) do
-    send_supervisory_function(data)
+  def data_transfer({:timeout, :send_telegram_receipt}, :data_transfer, data) do
+    send_telegram_receipt(data)
   end
 
   def data_transfer({:timeout, :idle}, :data_transfer, data) do
     %ControlFunction{function: :test_frame_activation}
     |> send_frame(data)
 
-    {:keep_state_and_data, [{:state_timeout, data.response_timeout, :response}]}
+    {:keep_state_and_data,
+     [{{:timeout, :test_frame_confirmation}, data.response_timeout, :data_transfer}]}
   end
 
   def data_transfer(:state_timeout, :response, data) do
-    :ok = :gen_tcp.close(data.socket)
+    {data, actions} =
+      {data, []}
+      |> reset_data_transfer()
+      |> disconnect()
 
-    {:next_state, :disconnected, %{data | socket: nil},
-     [{:state_timeout, data.connect_backoff, :connect}]}
+    {:next_state, :disconnected, data, actions}
   end
 
-  defp send_supervisory_function(data) do
-    %SupervisoryFunction{
-      received_sequence_number: data.received_sequence_number + 1
-    }
+  def data_transfer({:timeout, :test_frame_confirmation}, :data_transfer, data) do
+    {data, actions} =
+      {data, []}
+      |> reset_data_transfer()
+      |> disconnect()
+
+    {:next_state, :disconnected, data, actions}
+  end
+
+  defp handle_telegram_receipt({data, actions}, received_sequence_number) do
+    _ = notify_handler(data, received_sequence_number)
+
+    if data.telegrams_sent == received_sequence_number do
+      {%{data | telegmams_delivered: received_sequence_number},
+       actions ++ [{:state_timeout, :cancel}]}
+    else
+      {%{data | telegmams_delivered: received_sequence_number},
+       actions ++ [{:state_timeout, data.response_timeout, :response}]}
+    end
+  end
+
+  defp data_transfer_idle_timeout({data, actions}) do
+    {data, actions ++ [{{:timeout, :idle}, data.data_transfer_idle_timeout, :data_transfer}]}
+  end
+
+  defp maybe_schedule_telegram_receipt({data, actions}) do
+    cond do
+      send_telegram_receipt_threshold_reached?(data) ->
+        {data, actions ++ [{:next_event, :internal, :send_telegram_receipt}]}
+
+      not data.telegram_receipt_scheduled? ->
+        {%{data | telegram_receipt_scheduled?: true},
+         actions ++
+           [
+             {{:timeout, :send_telegram_receipt}, data.send_telegram_receipt_timeout,
+              :data_transfer}
+           ]}
+
+      true ->
+        {data, actions}
+    end
+  end
+
+  defp reset_data_transfer({data, actions}) do
+    {%{data | telegrams_received: 0, telegrams_receipted: 0, telegram_receipt_scheduled?: false},
+     actions ++
+       [
+         {{:timeout, :send_telegram_receipt}, :cancel},
+         {{:timeout, :idle}, :cancel},
+         {{:timeout, :test_frame_confirmation}, :cancel}
+       ]}
+  end
+
+  defp disconnect({data, actions}) do
+    :ok = :gen_tcp.close(data.socket)
+    _ = notify_handler(data, :disconnected)
+
+    {%{data | socket: nil, buffer: <<>>},
+     actions ++ [{:state_timeout, data.connect_backoff, :connect}]}
+  end
+
+  defp send_telegram_receipt(data) do
+    %SupervisoryFunction{received_sequence_number: data.telegrams_received}
     |> send_frame(data)
 
     {:keep_state,
      %{
        data
-       | sequence_synchronization_timer_running?: false,
-         acknowledged_received_sequence_number: data.received_sequence_number + 1
-     }}
+       | telegram_receipt_scheduled?: false,
+         telegrams_receipted: data.telegrams_received
+     },
+     [
+       {{:timeout, :send_telegram_receipt}, :cancel}
+     ]}
   end
 
   defp send_frame(frame, data) do
@@ -315,34 +436,28 @@ defmodule IEC104.ControllingConnection do
     send(data.handler, {__MODULE__, state})
   end
 
-  defp data_transfer_idle_timeout({data, actions}) do
-    {data, actions ++ [{{:timeout, :idle}, data.data_transfer_idle_timeout, :data_transfer}]}
+  defp send_telegram_receipt_threshold_reached?(data) do
+    SequenceNumber.diff(data.telegrams_receipted, data.telegrams_received) >
+      data.send_telegram_receipt_threshold
   end
 
-  defp sequence_synchronization({data, actions}) do
-    cond do
-      sequence_synchronization_threshold_reached?(data) ->
-        {data, actions ++ [{:next_event, :internal, :sequence_synchronization}]}
-
-      not data.sequence_synchronization_timer_running? ->
-        {%{data | sequence_synchronization_timer_running?: true},
-         actions ++
-           [
-             {{:timeout, :sequence_synchronization}, data.sequence_synchronization_timeout,
-              :data_transfer}
-           ]}
-
-      true ->
-        {data, actions}
-    end
+  defp valid_sent_sequence_number?(data, sent_sequence_number) do
+    data.telegrams_received == sent_sequence_number
   end
 
-  defp sequence_synchronization_threshold_reached?(data) do
-    abs(data.acknowledged_received_sequence_number - data.received_sequence_number) >=
-      data.sequence_synchronization_threshold
+  defp valid_received_sequence_number?(data, received_sequence_number) do
+    allowed_range = SequenceNumber.diff(data.telegmams_delivered, data.telegrams_sent)
+
+    newly_acknowledged_telegrams =
+      SequenceNumber.diff(data.telegmams_delivered, received_sequence_number)
+
+    remaining_telegrams = SequenceNumber.diff(received_sequence_number, data.telegrams_sent)
+
+    data.telegrams_sent == received_sequence_number or
+      (allowed_range >= newly_acknowledged_telegrams and allowed_range > remaining_telegrams)
   end
 
-  defp handle_frame({data, actions}) do
+  defp handle_next_frame({data, actions}) do
     if data.buffer == <<>> do
       {data, actions}
     else
