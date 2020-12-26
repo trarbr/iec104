@@ -14,7 +14,7 @@ defmodule IEC104.ControllingConnectionTest do
       {:ok, _pid} = ControllingConnection.start_link(port: context.listen_port)
 
       assert {:ok, _socket} = :gen_tcp.accept(context.listen_socket)
-      assert_receive {ControllingConnection, :connected}
+      assert_receive {ControllingConnection, :state, :connected}
     end
 
     test "keeps trying if it fails to connect", context do
@@ -30,7 +30,7 @@ defmodule IEC104.ControllingConnectionTest do
       {:ok, listen_socket} = :gen_tcp.listen(context.listen_port, [:binary])
 
       assert {:ok, _socket} = :gen_tcp.accept(listen_socket)
-      assert_receive {ControllingConnection, :connected}
+      assert_receive {ControllingConnection, :state, :connected}
     end
   end
 
@@ -49,7 +49,7 @@ defmodule IEC104.ControllingConnectionTest do
       %ControlFunction{function: :start_data_transfer_confirmation}
       |> send_frame(context.socket)
 
-      assert_receive {ControllingConnection, :data_transfer}
+      assert_receive {ControllingConnection, :state, :data_transfer}
     end
 
     test "disconnects if test frame confirmation is not received", context do
@@ -66,8 +66,8 @@ defmodule IEC104.ControllingConnectionTest do
 
       :ok = :gen_tcp.close(context.socket)
 
-      assert_receive {ControllingConnection, :disconnected}
-      assert_receive {ControllingConnection, :connected}
+      assert_receive {ControllingConnection, :state, :disconnected}
+      assert_receive {ControllingConnection, :state, :connected}
     end
   end
 
@@ -106,7 +106,7 @@ defmodule IEC104.ControllingConnectionTest do
 
       {:ok, _test_frame_activation} = :gen_tcp.recv(context.socket, 0)
 
-      assert_receive {ControllingConnection, :disconnected}
+      assert_receive {ControllingConnection, :state, :disconnected}
       assert {:error, :closed} = :gen_tcp.recv(context.socket, 0)
     end
 
@@ -120,7 +120,7 @@ defmodule IEC104.ControllingConnectionTest do
       }
       |> send_frame(context.socket)
 
-      assert_receive {ControllingConnection, %IEC104.Telegram{} = telegram}
+      assert_receive {ControllingConnection, :telegram, %IEC104.Telegram{} = telegram}
       assert telegram() == telegram
     end
 
@@ -182,7 +182,7 @@ defmodule IEC104.ControllingConnectionTest do
       }
       |> send_frame(context.socket)
 
-      assert_receive {ControllingConnection, :disconnected}
+      assert_receive {ControllingConnection, :state, :disconnected}
       assert {:error, :closed} = :gen_tcp.recv(context.socket, 0)
     end
 
@@ -287,7 +287,7 @@ defmodule IEC104.ControllingConnectionTest do
       %SupervisoryFunction{received_sequence_number: sequence_number}
       |> send_frame(context.socket)
 
-      assert_receive {ControllingConnection, ^sequence_number}
+      assert_receive {ControllingConnection, :telegram_receipt, ^sequence_number}
     end
 
     test "does not notify handler when wrong received_sequence_number is received", context do
@@ -309,7 +309,7 @@ defmodule IEC104.ControllingConnectionTest do
       %SupervisoryFunction{received_sequence_number: wrong_sequence_number}
       |> send_frame(context.socket)
 
-      assert_receive {ControllingConnection, :disconnected}
+      assert_receive {ControllingConnection, :state, :disconnected}
       assert {:error, :closed} = :gen_tcp.recv(context.socket, 0)
     end
 
@@ -319,7 +319,7 @@ defmodule IEC104.ControllingConnectionTest do
       {:ok, _sequence_number} = ControllingConnection.send_telegram(context.conn, telegram())
       {:ok, _frame} = :gen_tcp.recv(context.socket, 0)
 
-      assert_receive {ControllingConnection, :disconnected}
+      assert_receive {ControllingConnection, :state, :disconnected}
       assert {:error, :closed} = :gen_tcp.recv(context.socket, 0)
     end
 
@@ -335,7 +335,7 @@ defmodule IEC104.ControllingConnectionTest do
       }
       |> send_frame(context.socket)
 
-      assert_receive {ControllingConnection, ^sequence_number}
+      assert_receive {ControllingConnection, :telegram_receipt, ^sequence_number}
     end
 
     test "transitions to connected when data transfer is stopped", context do
@@ -350,7 +350,7 @@ defmodule IEC104.ControllingConnectionTest do
       %ControlFunction{function: :stop_data_transfer_confirmation}
       |> send_frame(context.socket)
 
-      assert_receive {ControllingConnection, :connected}
+      assert_receive {ControllingConnection, :state, :connected}
     end
 
     test "reconnects if connection is closed", context do
@@ -358,8 +358,8 @@ defmodule IEC104.ControllingConnectionTest do
 
       :ok = :gen_tcp.close(context.socket)
 
-      assert_receive {ControllingConnection, :disconnected}
-      assert_receive {ControllingConnection, :connected}
+      assert_receive {ControllingConnection, :state, :disconnected}
+      assert_receive {ControllingConnection, :state, :connected}
     end
   end
 
@@ -375,7 +375,7 @@ defmodule IEC104.ControllingConnectionTest do
     {:ok, socket} = :gen_tcp.accept(context.listen_socket)
 
     receive do
-      {ControllingConnection, :connected} ->
+      {ControllingConnection, :state, :connected} ->
         Map.merge(context, %{conn: conn, socket: socket})
     end
   end
@@ -390,7 +390,7 @@ defmodule IEC104.ControllingConnectionTest do
     |> send_frame(context.socket)
 
     receive do
-      {ControllingConnection, :data_transfer} -> context
+      {ControllingConnection, :state, :data_transfer} -> context
     end
   end
 

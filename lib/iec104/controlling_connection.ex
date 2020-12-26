@@ -147,7 +147,7 @@ defmodule IEC104.ControllingConnection do
       when event_type in [:internal, :state_timeout] do
     case :gen_tcp.connect(data.host, data.port, [:binary], data.connect_timeout) do
       {:ok, socket} ->
-        _ = notify_handler(data, :connected)
+        _ = notify_handler(data, :state, :connected)
         {:next_state, :connected, %{data | socket: socket}}
 
       {:error, :timeout} ->
@@ -185,7 +185,7 @@ defmodule IEC104.ControllingConnection do
     |> Frame.decode()
     |> case do
       {:ok, %ControlFunction{function: :start_data_transfer_confirmation}, rest} ->
-        _ = notify_handler(data, :data_transfer)
+        _ = notify_handler(data, :state, :data_transfer)
 
         {data, actions} =
           {%{data | buffer: rest}, []}
@@ -256,7 +256,7 @@ defmodule IEC104.ControllingConnection do
       {:ok, %InformationTransfer{} = frame, rest} ->
         if valid_received_sequence_number?(data, frame.received_sequence_number) and
              valid_sent_sequence_number?(data, frame.sent_sequence_number) do
-          _ = notify_handler(data, frame.telegram)
+          _ = notify_handler(data, :telegram, frame.telegram)
 
           {data, actions} =
             {%{
@@ -317,7 +317,7 @@ defmodule IEC104.ControllingConnection do
         {:keep_state, data, actions}
 
       {:ok, %ControlFunction{function: :stop_data_transfer_confirmation}, rest} ->
-        _ = notify_handler(data, :connected)
+        _ = notify_handler(data, :state, :connected)
 
         {data, actions} =
           {%{data | buffer: rest}, []}
@@ -366,7 +366,7 @@ defmodule IEC104.ControllingConnection do
   end
 
   defp handle_telegram_receipt({data, actions}, received_sequence_number) do
-    _ = notify_handler(data, received_sequence_number)
+    _ = notify_handler(data, :telegram_receipt, received_sequence_number)
 
     if data.telegrams_sent == received_sequence_number do
       {%{data | telegmams_delivered: received_sequence_number},
@@ -411,7 +411,7 @@ defmodule IEC104.ControllingConnection do
 
   defp disconnect({data, actions}) do
     :ok = :gen_tcp.close(data.socket)
-    _ = notify_handler(data, :disconnected)
+    _ = notify_handler(data, :state, :disconnected)
 
     {%{data | socket: nil, buffer: <<>>},
      actions ++ [{:state_timeout, data.connect_backoff, :connect}]}
@@ -437,8 +437,8 @@ defmodule IEC104.ControllingConnection do
     :ok = :gen_tcp.send(data.socket, frame)
   end
 
-  defp notify_handler(data, state) do
-    send(data.handler, {__MODULE__, state})
+  defp notify_handler(data, type, message) do
+    send(data.handler, {__MODULE__, type, message})
   end
 
   defp send_telegram_receipt_threshold_reached?(data) do
