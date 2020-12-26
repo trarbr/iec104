@@ -1,9 +1,9 @@
-defmodule IEC104.MixProject do
+defmodule ControlRoom.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :iec104,
+      app: :control_room,
       version: "0.1.0",
       elixir: "~> 1.11",
       start_permanent: Mix.env() == :prod,
@@ -13,14 +13,14 @@ defmodule IEC104.MixProject do
 
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger],
+      mod: {ControlRoom.Application, []}
     ]
   end
 
   defp deps do
     [
-      {:nimble_options, "~> 0.3.0"},
-      {:ex_doc, "~> 0.22", only: :dev, runtime: false}
+      {:iec104, path: "../../"}
     ]
   end
 end
