@@ -165,17 +165,27 @@ defmodule IEC104.ControllingConnection do
   def connected({:call, from}, :start_data_transfer, data) do
     %ControlFunction{function: :start_data_transfer_activation}
     |> send_frame(data)
+    |> case do
+      :ok ->
+        {:keep_state_and_data,
+         [{:reply, from, :ok}, {:state_timeout, data.response_timeout, :response}]}
 
-    {:keep_state_and_data,
-     [{:reply, from, :ok}, {:state_timeout, data.response_timeout, :response}]}
+      _error ->
+        {data, actions} = disconnect({data, []})
+        {:next_state, :disconnected, data, actions}
+    end
   end
 
-  def connected(:info, {:tcp_closed, _port}, data) do
+  def connected(:info, {:tcp_closed, socket}, data) when data.socket == socket do
     {data, actions} = disconnect({data, []})
     {:next_state, :disconnected, data, actions}
   end
 
-  def connected(:info, {:tcp, _port, frame}, data) do
+  def connected(:info, {:tcp_closed, _socket}, _data) do
+    :keep_state_and_data
+  end
+
+  def connected(:info, {:tcp, _socket, frame}, data) do
     {:keep_state, %{data | buffer: data.buffer <> frame},
      [{:next_event, :internal, :handle_frame}]}
   end
@@ -212,30 +222,42 @@ defmodule IEC104.ControllingConnection do
       telegram: telegram
     }
     |> send_frame(data)
+    |> case do
+      :ok ->
+        {:keep_state,
+         %{
+           data
+           | telegrams_receipted: data.telegrams_received,
+             telegram_receipt_scheduled?: false,
+             telegrams_sent: SequenceNumber.increment(data.telegrams_sent)
+         },
+         [
+           {:reply, from, {:ok, SequenceNumber.increment(data.telegrams_sent)}},
+           {{:timeout, :send_telegram_receipt}, :cancel},
+           {:state_timeout, data.response_timeout, :response}
+         ]}
 
-    {:keep_state,
-     %{
-       data
-       | telegrams_receipted: data.telegrams_received,
-         telegram_receipt_scheduled?: false,
-         telegrams_sent: SequenceNumber.increment(data.telegrams_sent)
-     },
-     [
-       {:reply, from, {:ok, SequenceNumber.increment(data.telegrams_sent)}},
-       {{:timeout, :send_telegram_receipt}, :cancel},
-       {:state_timeout, data.response_timeout, :response}
-     ]}
+      _error ->
+        {data, actions} = disconnect({data, []})
+        {:next_state, :disconnected, data, actions}
+    end
   end
 
   def data_transfer({:call, from}, :stop_data_transfer, data) do
     %ControlFunction{function: :stop_data_transfer_activation}
     |> send_frame(data)
+    |> case do
+      :ok ->
+        {:keep_state_and_data,
+         [{:reply, from, :ok}, {:state_timeout, data.response_timeout, :response}]}
 
-    {:keep_state_and_data,
-     [{:reply, from, :ok}, {:state_timeout, data.response_timeout, :response}]}
+      _error ->
+        {data, actions} = disconnect({data, []})
+        {:next_state, :disconnected, data, actions}
+    end
   end
 
-  def data_transfer(:info, {:tcp_closed, _port}, data) do
+  def data_transfer(:info, {:tcp_closed, socket}, data) when data.socket == socket do
     {data, actions} =
       {data, []}
       |> reset_data_transfer()
@@ -244,7 +266,11 @@ defmodule IEC104.ControllingConnection do
     {:next_state, :disconnected, data, actions}
   end
 
-  def data_transfer(:info, {:tcp, _port, frame}, data) do
+  def data_transfer(:info, {:tcp_closed, _socket}, _data) do
+    :keep_state_and_data
+  end
+
+  def data_transfer(:info, {:tcp, _socket, frame}, data) do
     {:keep_state, %{data | buffer: data.buffer <> frame},
      [{:next_event, :internal, :handle_frame}]}
   end
@@ -300,13 +326,19 @@ defmodule IEC104.ControllingConnection do
       {:ok, %ControlFunction{function: :test_frame_activation}, rest} ->
         %ControlFunction{function: :test_frame_confirmation}
         |> send_frame(data)
+        |> case do
+          :ok ->
+            {data, actions} =
+              {%{data | buffer: rest}, []}
+              |> data_transfer_idle_timeout()
+              |> handle_next_frame()
 
-        {data, actions} =
-          {%{data | buffer: rest}, []}
-          |> data_transfer_idle_timeout()
-          |> handle_next_frame()
+            {:keep_state, data, actions}
 
-        {:keep_state, data, actions}
+          _error ->
+            {data, actions} = disconnect({data, []})
+            {:next_state, :disconnected, data, actions}
+        end
 
       {:ok, %ControlFunction{function: :test_frame_confirmation}, rest} ->
         {data, actions} =
@@ -342,9 +374,15 @@ defmodule IEC104.ControllingConnection do
   def data_transfer({:timeout, :idle}, :data_transfer, data) do
     %ControlFunction{function: :test_frame_activation}
     |> send_frame(data)
+    |> case do
+      :ok ->
+        {:keep_state_and_data,
+         [{{:timeout, :test_frame_confirmation}, data.response_timeout, :data_transfer}]}
 
-    {:keep_state_and_data,
-     [{{:timeout, :test_frame_confirmation}, data.response_timeout, :data_transfer}]}
+      _error ->
+        {data, actions} = disconnect({data, []})
+        {:next_state, :disconnected, data, actions}
+    end
   end
 
   def data_transfer(:state_timeout, :response, data) do
@@ -425,23 +463,27 @@ defmodule IEC104.ControllingConnection do
   defp send_telegram_receipt(data) do
     %SupervisoryFunction{received_sequence_number: data.telegrams_received}
     |> send_frame(data)
+    |> case do
+      :ok ->
+        {:keep_state,
+         %{
+           data
+           | telegram_receipt_scheduled?: false,
+             telegrams_receipted: data.telegrams_received
+         },
+         [
+           {{:timeout, :send_telegram_receipt}, :cancel}
+         ]}
 
-    {:keep_state,
-     %{
-       data
-       | telegram_receipt_scheduled?: false,
-         telegrams_receipted: data.telegrams_received
-     },
-     [
-       {{:timeout, :send_telegram_receipt}, :cancel}
-     ]}
+      _error ->
+        {data, actions} = disconnect({data, []})
+        {:next_state, :disconnected, data, actions}
+    end
   end
 
   defp send_frame(frame, data) do
     {:ok, frame} = Frame.encode(frame)
-    # TODO: This can result in an error if the socket was already closed
-    # I wonder how we are gonna handle that?
-    :ok = :gen_tcp.send(data.socket, frame)
+    :gen_tcp.send(data.socket, frame)
   end
 
   defp notify_handler(data, type, message) do
