@@ -150,9 +150,14 @@ defmodule IEC104.ControllingConnection do
         _ = notify_handler(data, :connected)
         {:next_state, :connected, %{data | socket: socket}}
 
+      {:error, :timeout} ->
+        # If the connection attempt times out we attempt to reconnect immediately.
+        Logger.info("could not connect: timeout")
+        {:keep_state_and_data, [{:next_event, :internal, :connect}]}
+
       error ->
         Logger.info("could not connect: #{inspect(error)}")
-        {:keep_state_and_data, [{:next_event, :internal, :connect}]}
+        {:keep_state_and_data, [{:state_timeout, data.connect_backoff, :connect}]}
     end
   end
 
