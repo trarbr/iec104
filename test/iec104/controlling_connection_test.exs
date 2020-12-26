@@ -120,7 +120,7 @@ defmodule IEC104.ControllingConnectionTest do
       }
       |> send_frame(context.socket)
 
-      assert_receive {ControllingConnection, :telegram, %IEC104.Telegram{} = telegram}
+      assert_receive {ControllingConnection, :telegram, %Telegram{} = telegram}
       assert telegram() == telegram
     end
 
@@ -335,7 +335,19 @@ defmodule IEC104.ControllingConnectionTest do
       }
       |> send_frame(context.socket)
 
+      assert_receive {ControllingConnection, :telegram, _telegram}
       assert_receive {ControllingConnection, :telegram_receipt, ^sequence_number}
+
+      # Check that the handler does not receive duplicate telegram receipts
+      %InformationTransfer{
+        received_sequence_number: sequence_number,
+        sent_sequence_number: 1,
+        telegram: telegram()
+      }
+      |> send_frame(context.socket)
+
+      assert_receive {ControllingConnection, :telegram, _telegram}
+      refute_receive {ControllingConnection, :telegram_receipt, _sequence_number}
     end
 
     test "transitions to connected when data transfer is stopped", context do

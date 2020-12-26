@@ -5,7 +5,7 @@ defmodule IEC104.MixProject do
     [
       app: :iec104,
       version: "0.1.0",
-      elixir: "~> 1.9",
+      elixir: "~> 1.11",
       start_permanent: Mix.env() == :prod,
       deps: deps()
     ]

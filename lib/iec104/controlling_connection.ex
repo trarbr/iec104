@@ -22,7 +22,7 @@ defmodule IEC104.ControllingConnection do
     :telegrams_receipted,
     :telegram_receipt_scheduled?,
     :telegrams_sent,
-    :telegmams_delivered
+    :telegrams_delivered
   ]
 
   @options_schema [
@@ -134,7 +134,7 @@ defmodule IEC104.ControllingConnection do
       telegrams_receipted: 0,
       telegram_receipt_scheduled?: false,
       telegrams_sent: 0,
-      telegmams_delivered: 0
+      telegrams_delivered: 0
     }
 
     actions = [{:next_event, :internal, :connect}]
@@ -365,14 +365,19 @@ defmodule IEC104.ControllingConnection do
     {:next_state, :disconnected, data, actions}
   end
 
+  defp handle_telegram_receipt({data, actions}, received_sequence_number)
+       when data.telegrams_delivered == received_sequence_number do
+    {data, actions}
+  end
+
   defp handle_telegram_receipt({data, actions}, received_sequence_number) do
     _ = notify_handler(data, :telegram_receipt, received_sequence_number)
 
     if data.telegrams_sent == received_sequence_number do
-      {%{data | telegmams_delivered: received_sequence_number},
+      {%{data | telegrams_delivered: received_sequence_number},
        actions ++ [{:state_timeout, :cancel}]}
     else
-      {%{data | telegmams_delivered: received_sequence_number},
+      {%{data | telegrams_delivered: received_sequence_number},
        actions ++ [{:state_timeout, data.response_timeout, :response}]}
     end
   end
@@ -434,6 +439,8 @@ defmodule IEC104.ControllingConnection do
 
   defp send_frame(frame, data) do
     {:ok, frame} = Frame.encode(frame)
+    # TODO: This can result in an error if the socket was already closed
+    # I wonder how we are gonna handle that?
     :ok = :gen_tcp.send(data.socket, frame)
   end
 
@@ -451,10 +458,10 @@ defmodule IEC104.ControllingConnection do
   end
 
   defp valid_received_sequence_number?(data, received_sequence_number) do
-    allowed_range = SequenceNumber.diff(data.telegmams_delivered, data.telegrams_sent)
+    allowed_range = SequenceNumber.diff(data.telegrams_delivered, data.telegrams_sent)
 
     newly_acknowledged_telegrams =
-      SequenceNumber.diff(data.telegmams_delivered, received_sequence_number)
+      SequenceNumber.diff(data.telegrams_delivered, received_sequence_number)
 
     remaining_telegrams = SequenceNumber.diff(received_sequence_number, data.telegrams_sent)
 
