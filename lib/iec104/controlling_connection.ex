@@ -102,14 +102,18 @@ defmodule IEC104.ControllingConnection do
     end
   end
 
+  @spec start_data_transfer(:gen_statem.server_ref()) :: :ok | {:error, :closed | :inet.posix()}
   def start_data_transfer(conn) do
     :gen_statem.call(conn, :start_data_transfer)
   end
 
+  @spec stop_data_transfer(:gen_statem.server_ref()) :: :ok | {:error, :closed | :inet.posix()}
   def stop_data_transfer(conn) do
     :gen_statem.call(conn, :stop_data_transfer)
   end
 
+  @spec send_telegram(:gen_statem.server_ref(), Telegram.t()) ::
+          :ok | {:error, :closed | :inet.posix()}
   def send_telegram(conn, telegram) do
     :gen_statem.call(conn, {:send_telegram, telegram})
   end
@@ -170,8 +174,8 @@ defmodule IEC104.ControllingConnection do
         {:keep_state_and_data,
          [{:reply, from, :ok}, {:state_timeout, data.response_timeout, :response}]}
 
-      _error ->
-        {data, actions} = disconnect({data, []})
+      error ->
+        {data, actions} = disconnect({data, [{:reply, from, error}]})
         {:next_state, :disconnected, data, actions}
     end
   end
@@ -237,8 +241,8 @@ defmodule IEC104.ControllingConnection do
            {:state_timeout, data.response_timeout, :response}
          ]}
 
-      _error ->
-        {data, actions} = disconnect({data, []})
+      error ->
+        {data, actions} = disconnect({data, [{:reply, from, error}]})
         {:next_state, :disconnected, data, actions}
     end
   end
@@ -251,8 +255,8 @@ defmodule IEC104.ControllingConnection do
         {:keep_state_and_data,
          [{:reply, from, :ok}, {:state_timeout, data.response_timeout, :response}]}
 
-      _error ->
-        {data, actions} = disconnect({data, []})
+      error ->
+        {data, actions} = disconnect({data, [{:reply, from, error}]})
         {:next_state, :disconnected, data, actions}
     end
   end
