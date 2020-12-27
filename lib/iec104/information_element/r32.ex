@@ -9,7 +9,7 @@ defmodule IEC104.InformationElement.R32 do
   @min -@max
 
   @spec new(float()) :: t()
-  def new(number) when number >= @min and number <= @max do
+  def new(number) when is_float(number) and number >= @min and number <= @max do
     number
   end
 

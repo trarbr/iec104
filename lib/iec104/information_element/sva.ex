@@ -9,7 +9,7 @@ defmodule IEC104.InformationElement.SVA do
   @min -32_768
 
   @spec new(integer()) :: t()
-  def new(number) when number >= @min and number <= @max do
+  def new(number) when is_integer(number) and number >= @min and number <= @max do
     number
   end
 
