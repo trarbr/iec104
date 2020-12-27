@@ -185,7 +185,7 @@ defmodule IEC104.FrameTest do
       invalid?: false,
       overflow?: false,
       substituted?: false,
-      topical?: false
+      not_topical?: false
     }
   end
 end

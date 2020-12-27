@@ -1,4 +1,6 @@
 defmodule IEC104.Frame do
+  @moduledoc false
+
   alias IEC104.Frame.{ControlFunction, InformationTransfer, SupervisoryFunction}
 
   @type t() :: ControlFunction.t() | InformationTransfer.t() | SupervisoryFunction.t()
