@@ -283,87 +283,8 @@ defmodule IEC104.ControllingConnection do
     data.buffer
     |> Frame.decode()
     |> case do
-      {:ok, %InformationTransfer{} = frame, rest} ->
-        if valid_received_sequence_number?(data, frame.received_sequence_number) and
-             valid_sent_sequence_number?(data, frame.sent_sequence_number) do
-          _ = notify_handler(data, :telegram, frame.telegram)
-
-          {data, actions} =
-            {%{
-               data
-               | buffer: rest,
-                 telegrams_received: SequenceNumber.increment(data.telegrams_received)
-             }, []}
-            |> handle_telegram_receipt(frame.received_sequence_number)
-            |> data_transfer_idle_timeout()
-            |> maybe_schedule_telegram_receipt()
-            |> handle_next_frame()
-
-          {:keep_state, data, actions}
-        else
-          {data, actions} =
-            {data, []}
-            |> reset_data_transfer()
-            |> disconnect()
-
-          {:next_state, :disconnected, data, actions}
-        end
-
-      {:ok, %SupervisoryFunction{} = frame, rest} ->
-        if valid_received_sequence_number?(data, frame.received_sequence_number) do
-          {data, actions} =
-            {%{data | buffer: rest}, []}
-            |> handle_telegram_receipt(frame.received_sequence_number)
-            |> data_transfer_idle_timeout()
-            |> handle_next_frame()
-
-          {:keep_state, data, actions}
-        else
-          {data, actions} =
-            {data, []}
-            |> reset_data_transfer()
-            |> disconnect()
-
-          {:next_state, :disconnected, data, actions}
-        end
-
-      {:ok, %ControlFunction{function: :test_frame_activation}, rest} ->
-        %ControlFunction{function: :test_frame_confirmation}
-        |> send_frame(data)
-        |> case do
-          :ok ->
-            {data, actions} =
-              {%{data | buffer: rest}, []}
-              |> data_transfer_idle_timeout()
-              |> handle_next_frame()
-
-            {:keep_state, data, actions}
-
-          _error ->
-            {data, actions} = disconnect({data, []})
-            {:next_state, :disconnected, data, actions}
-        end
-
-      {:ok, %ControlFunction{function: :test_frame_confirmation}, rest} ->
-        {data, actions} =
-          {%{data | buffer: rest}, [{{:timeout, :test_frame_confirmation}, :cancel}]}
-          |> data_transfer_idle_timeout()
-          |> handle_next_frame()
-
-        {:keep_state, data, actions}
-
-      {:ok, %ControlFunction{function: :stop_data_transfer_confirmation}, rest} ->
-        _ = notify_handler(data, :state, :connected)
-
-        {data, actions} =
-          {%{data | buffer: rest}, []}
-          |> reset_data_transfer()
-          |> handle_next_frame()
-
-        {:next_state, :connected, data, actions}
-
-      {:error, :in_frame} ->
-        :keep_state_and_data
+      {:ok, frame, rest} -> handle_frame(frame, %{data | buffer: rest})
+      {:error, :in_frame} -> :keep_state_and_data
     end
   end
 
@@ -405,6 +326,86 @@ defmodule IEC104.ControllingConnection do
       |> disconnect()
 
     {:next_state, :disconnected, data, actions}
+  end
+
+  defp handle_frame(%InformationTransfer{} = frame, data) do
+    if valid_received_sequence_number?(data, frame.received_sequence_number) and
+         valid_sent_sequence_number?(data, frame.sent_sequence_number) do
+      _ = notify_handler(data, :telegram, frame.telegram)
+
+      {data, actions} =
+        {%{data | telegrams_received: SequenceNumber.increment(data.telegrams_received)}, []}
+        |> handle_telegram_receipt(frame.received_sequence_number)
+        |> data_transfer_idle_timeout()
+        |> maybe_schedule_telegram_receipt()
+        |> handle_next_frame()
+
+      {:keep_state, data, actions}
+    else
+      {data, actions} =
+        {data, []}
+        |> reset_data_transfer()
+        |> disconnect()
+
+      {:next_state, :disconnected, data, actions}
+    end
+  end
+
+  defp handle_frame(%SupervisoryFunction{} = frame, data) do
+    if valid_received_sequence_number?(data, frame.received_sequence_number) do
+      {data, actions} =
+        {data, []}
+        |> handle_telegram_receipt(frame.received_sequence_number)
+        |> data_transfer_idle_timeout()
+        |> handle_next_frame()
+
+      {:keep_state, data, actions}
+    else
+      {data, actions} =
+        {data, []}
+        |> reset_data_transfer()
+        |> disconnect()
+
+      {:next_state, :disconnected, data, actions}
+    end
+  end
+
+  defp handle_frame(%ControlFunction{function: :test_frame_activation}, data) do
+    %ControlFunction{function: :test_frame_confirmation}
+    |> send_frame(data)
+    |> case do
+      :ok ->
+        {data, actions} =
+          {data, []}
+          |> data_transfer_idle_timeout()
+          |> handle_next_frame()
+
+        {:keep_state, data, actions}
+
+      _error ->
+        {data, actions} = disconnect({data, []})
+        {:next_state, :disconnected, data, actions}
+    end
+  end
+
+  defp handle_frame(%ControlFunction{function: :test_frame_confirmation}, data) do
+    {data, actions} =
+      {data, [{{:timeout, :test_frame_confirmation}, :cancel}]}
+      |> data_transfer_idle_timeout()
+      |> handle_next_frame()
+
+    {:keep_state, data, actions}
+  end
+
+  defp handle_frame(%ControlFunction{function: :stop_data_transfer_confirmation}, data) do
+    _ = notify_handler(data, :state, :connected)
+
+    {data, actions} =
+      {data, []}
+      |> reset_data_transfer()
+      |> handle_next_frame()
+
+    {:next_state, :connected, data, actions}
   end
 
   defp handle_telegram_receipt({data, actions}, received_sequence_number)
